@@ -1,18 +1,44 @@
 #pragma once
 
 enum {
-  ID = 0
-  // keywords
-  ,
-  TYPE_CHAR
-  // delimiters
-  ,
+  ID = 0,    // keywords
+  TYPE_CHAR, // delimiters
+  TYPE_DOUBLE,
+  ELSE,
+  IF,
+  TYPE_INT,
+  RETURN,
+  STRUCT,
+  VOID,
+  WHILE,
+  SEMICOLON,
+  LPAR,
+  RPAR,
+  LBRACKET,
+  RBRACKET,
+  LACC,
+  RACC,
   COMMA,
-  END
-  // operators
-  ,
+  END, // operators
+  ADD,
+  SUB,
+  MUL,
+  DIV,
+  DOT,
+  AND,
+  OR,
+  NOT,
   ASSIGN,
-  EQUAL
+  EQUAL,
+  NOTEQ,
+  LESS,
+  LESSEQ,
+  GREATER,
+  GREATEREQ,
+  INT,
+  DOUBLE,
+  CHAR,
+  STRING
 };
 
 typedef struct Token {
