@@ -2,9 +2,12 @@
 #include "utils.h"
 #include <stdio.h>
 
-int main() {
-    char *file = loadFile("/home/robert/Desktop/Facultate/LFTC/LFTC-Compiler/ALEX/tests/testlex.c");
-    Token *tokens = tokenize(file);
+int main(int argc, char *argv[]) {
+    if(argc != 2) {
+        throwError("Usage ./ALEX <file_path>");
+    }
+    char *file_data = loadFile(argv[1]);
+    Token *tokens = tokenize(file_data);
     showTokens(tokens);
     return 0;
 }
