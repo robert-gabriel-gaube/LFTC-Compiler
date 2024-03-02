@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 int main() {
-    char *file = loadFile("/home/rgaube/Personal/C/LFTC-Compiler/ALEX/tests/testlex.c");
+    char *file = loadFile("/home/robert/Desktop/Facultate/LFTC/LFTC-Compiler/ALEX/tests/testlex.c");
     Token *tokens = tokenize(file);
     showTokens(tokens);
     return 0;

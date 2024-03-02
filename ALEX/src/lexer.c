@@ -37,104 +37,160 @@ char *extract(const char *begin, const char *end) {
     throwError("Not a valid string segment");
   }
 
+  // Alloc space for segment
   size_t size_of_segment = end - begin;
   char *segment = (char *)safeAlloc(size_of_segment * sizeof(char) + 1);
+
+  // Copy segment
   strncpy(segment, begin, size_of_segment);
   segment[size_of_segment] = '\0';
 
   return segment;
 }
 
-void handleComment(const char **pch) {
-  while (**pch != '\r' && **pch != '\n') {
-    ++(*pch);
+const char *handleComment(const char *pch) {
+  while (*pch != '\r' && *pch != '\n') {
+    ++pch;
   }
-  if ((*pch)[1] == '\n') {
-    (*pch) += 2;
-  } else {
-    ++(*pch);
-  }
-  ++line;
+  return pch;
 }
 
-void handle_equal(const char **ppch) {
-  if ((*ppch)[1] == '=') {
-    addToken(EQUAL);
-    (*ppch) += 2;
+const char *handle_possibly_double_char(const char *pch, char ch,
+                                        TokenType if_yes, TokenType if_no) {
+  if (pch[1] == ch) {
+    addToken(if_yes);
+    return pch + 2;
   } else {
-    addToken(ASSIGN);
-    ++(*ppch);
+    addToken(if_no);
+    return pch + 1;
   }
 }
 
-void handle_default(const char **ppch) {
-  if (isdigit(**ppch)) {
-    char *endLong, *endDouble;
-
-    Token *tk = NULL;
-
-    long number = strtol(*ppch, &endLong, 10);
-    double numberDouble = strtod(*ppch, &endDouble);
-
-    if (endLong == endDouble && endLong != *ppch) {
-      tk = addToken(INT);
-      tk->i = number;
-      (*ppch) = endLong;
-    } else if (endDouble != *ppch) {
-      tk = addToken(DOUBLE);
-      tk->d = numberDouble;
-      (*ppch) = endDouble;
-    }
-  } else if (isalpha(**ppch) || **ppch == '_') {
-    Token *tk = NULL;
-
-    // Extract the portion of text from start to pch
-    const char *start = (*ppch)++;
-    while (isalnum(**ppch) || **ppch == '_') {
-      ++(*ppch);
-    }
-    char *text = extract(start, *ppch);
-
-    if (strcmp(text, "char") == 0) {
-      addToken(TYPE_CHAR);
-    } else if (strcmp(text, "double") == 0) {
-      addToken(TYPE_DOUBLE);
-    } else if (strcmp(text, "else") == 0) {
-      addToken(ELSE);
-    } else if (strcmp(text, "if") == 0) {
-      addToken(IF);
-    } else if (strcmp(text, "int") == 0) {
-      addToken(TYPE_INT);
-    } else if (strcmp(text, "return") == 0) {
-      addToken(RETURN);
-    } else if (strcmp(text, "struct") == 0) {
-      addToken(STRUCT);
-    } else if (strcmp(text, "void") == 0) {
-      addToken(VOID);
-    } else if (strcmp(text, "while") == 0) {
-      addToken(WHILE);
-    } else {
-      tk = addToken(ID);
-      tk->text = text;
-    }
+const char *handle_mandatory_double_char(const char *pch, char ch,
+                                         TokenType if_yes) {
+  if (pch[1] == ch) {
+    addToken(if_yes);
   } else {
-    throwError("Invalid char: %c (%d)", **ppch, **ppch);
+    throwError("Invalid random alone '%c'", ch);
+  }
+  return pch + 2;
+}
+
+const char *handle_double_char(const char *pch) {
+  if (*pch == '&') {
+    return handle_mandatory_double_char(pch, *pch, AND);
+  } else if (*pch == '|') {
+    return handle_mandatory_double_char(pch, *pch, OR);
+  } else {
+    const char *operators = "!<>=";
+    TokenType if_yes_values[] = {NOTEQ, LESSEQ, GREATEREQ, EQUAL};
+    TokenType if_no_values[] = {NOT, LESS, GREATER, ASSIGN};
+
+    size_t idx = strchr(operators, *pch) - operators;
+    return handle_possibly_double_char(pch, *pch, if_yes_values[idx],
+                                       if_no_values[idx]);
   }
 }
 
-void handleString(const char **ppch) {
-  ++(*ppch);
-  char *string = (char *)safeAlloc(100 * sizeof(char));
-  int idx = 0;
-  while (**ppch != '"') {
-    string[idx] = **ppch;
-    ++(*ppch);
-    ++idx;
+const char *handle_char(const char *pch) {
+  if (pch[2] == '\'') {
+    Token *tk = addToken(CHAR);
+    tk->c = pch[1];
   }
-  ++(*ppch);
-  string[idx] = 0;
+  return pch + 3;
+}
+
+const char *handle_slash(const char *pch) {
+  if (pch[1] == '/') {
+    return handleComment(pch);
+  } else {
+    addToken(DIV);
+    return pch + 1;
+  }
+}
+
+const char *handle_single_char(const char *pch) {
+  const char *single_chars = ",;()[]{}+-*.";
+  TokenType match_for_chars[] = {COMMA,    SEMICOLON, LPAR, RPAR,
+                                 LBRACKET, RBRACKET,  LACC, RACC,
+                                 ADD,      SUB,       MUL,  DOT};
+
+  // Get token index
+  const char *char_ptr = strchr(single_chars, *pch);
+  size_t idx = char_ptr - single_chars;
+
+  addToken(match_for_chars[idx]);
+  return pch + 1;
+}
+
+const char *handle_number(const char *pch) {
+  char *endLong, *endDouble;
+  long number = strtol(pch, &endLong, 10);
+  double numberDouble = strtod(pch, &endDouble);
+
+  if (endLong == endDouble) {
+    Token *tk = addToken(INT);
+    tk->i = number;
+    return endLong;
+  } else if (endDouble != pch) {
+    Token *tk = addToken(DOUBLE);
+    tk->d = numberDouble;
+    return endDouble;
+  }
+}
+
+void handle_text(char *text) {
+  const char *keywords[] = {"char",   "double", "int",  "else", "if",
+                            "return", "struct", "void", "while"};
+  TokenType tokens[] = {TYPE_CHAR, TYPE_DOUBLE, TYPE_INT, ELSE, IF,
+                        RETURN,    STRUCT,      VOID,     WHILE};
+
+  size_t number_of_keywords = 9;
+  for(size_t idx = 0; idx < number_of_keywords; ++idx) {
+    if(strcmp(text, keywords[idx])) {
+      addToken(tokens[idx]);
+      return;
+    }
+  }
+
+  // If not keyword
+  Token *tk = addToken(ID);
+  tk->text = text;
+}
+
+const char *handle_id_or_keyword(const char *pch) {
+  Token *tk = NULL;
+
+  // Extract the portion of text from start to pch
+  const char *start = pch++;
+  while (isalnum(*pch) || *pch == '_') {
+    ++pch;
+  }
+  char *text = extract(start, pch);
+
+  handle_text(text);
+
+  return pch;
+}
+
+const char *handle_default(const char *pch) {
+  if (isdigit(*pch)) {
+    return handle_number(pch);
+  } else if (isalpha(*pch) || *pch == '_') {
+    return handle_id_or_keyword(pch);
+  } else {
+    throwError("Invalid char: %c (%d)", *pch, *pch);
+  }
+}
+
+const char *handle_string(const char *pch) {
+  ++pch; // Jump over '"'
+  size_t number_of_chars_in_string = strchr(pch, '"') - pch;
+
   Token *tk = addToken(STRING);
-  tk->text = string;
+  tk->text = extract(pch, pch + number_of_chars_in_string);
+
+  return pch + number_of_chars_in_string + 1;
 }
 
 Token *tokenize(const char *pch) {
@@ -144,9 +200,8 @@ Token *tokenize(const char *pch) {
     case '\t':
       pch++;
       break;
-    case '\r': // handles different kinds of newlines (Windows: \r\n, Linux:
-               // \n, MacOS, OS X: \r or \n)
-      pch += (*pch == '\n' ? 1 : 0);
+    case '\r':
+      pch += (pch[1] == '\n' ? 1 : 0);
       // fallthrough to \n
     case '\n':
       line++;
@@ -156,119 +211,38 @@ Token *tokenize(const char *pch) {
       addToken(END);
       return tokens;
     case ',':
-      addToken(COMMA);
-      pch++;
-      break;
     case ';':
-      addToken(SEMICOLON);
-      pch++;
-      break;
     case '(':
-      addToken(LPAR);
-      pch++;
-      break;
     case ')':
-      addToken(RPAR);
-      pch++;
-      break;
     case '[':
-      addToken(LBRACKET);
-      pch++;
-      break;
     case ']':
-      addToken(RBRACKET);
-      pch++;
-      break;
     case '{':
-      addToken(LACC);
-      pch++;
-      break;
     case '}':
-      addToken(RACC);
-      pch++;
-      break;
     case '+':
-      addToken(ADD);
-      pch++;
-      break;
     case '-':
-      addToken(SUB);
-      pch++;
-      break;
     case '*':
-      addToken(MUL);
-      pch++;
+    case '.':
+      pch = handle_single_char(pch);
       break;
     case '"':
-      handleString(&pch);
+      pch = handle_string(pch);
       break;
     case '\'':
-      if (pch[1] != '\'' && pch[3] == '\'') {
-        Token *tk = addToken(CHAR);
-        tk->c = pch[2];
-      }
-      pch += 3;
+      pch = handle_char(pch);
       break;
     case '/':
-      if (pch[1] == '/') {
-        handleComment(&pch);
-      } else {
-        addToken(DIV);
-        pch++;
-      }
-      break;
-    case '.':
-      addToken(DOT);
-      pch++;
+      pch = handle_slash(pch);
       break;
     case '&':
-      if (pch[1] == '&') {
-        addToken(AND);
-      } else {
-        throwError("Invalid random alone '&'");
-      }
-      pch += 2;
-      break;
     case '|':
-      if (pch[1] == '|') {
-        addToken(OR);
-      } else {
-        throwError("Invalid random alone '|'");
-      }
-      pch += 2;
-      break;
     case '!':
-      if (pch[1] == '=') {
-        addToken(NOTEQ);
-        pch += 2;
-      } else {
-        addToken(NOT);
-        pch++;
-      }
-      break;
     case '<':
-      if (pch[1] == '=') {
-        addToken(LESSEQ);
-        pch += 2;
-      } else {
-        addToken(LESS);
-        pch++;
-      }
-      break;
     case '>':
-      if (pch[1] == '=') {
-        addToken(GREATEREQ);
-        pch += 2;
-      } else {
-        addToken(GREATER);
-        pch++;
-      }
-      break;
     case '=':
-      handle_equal(&pch);
+      pch = handle_double_char(pch);
       break;
     default:
-      handle_default(&pch);
+      pch = handle_default(pch);
     }
   }
 }
@@ -358,13 +332,13 @@ void showTokens(const Token *tokens) {
   for (const Token *tk = tokens; tk; tk = tk->next) {
     const char *label = getTokenString(tk->code);
     printf("%d\t%s", tk->line, label);
-    if (strcmp(label, "ID") == 0 || strcmp(label, "STRING") == 0) {
+    if (tk->code == ID || tk->code == STRING) {
       printf(":%s", tk->text);
-    } else if (strcmp(label, "INT") == 0) {
+    } else if (tk->code == INT) {
       printf(":%d", tk->i);
-    } else if (strcmp(label, "DOUBLE") == 0) {
+    } else if (tk->code == DOUBLE) {
       printf(":%f", tk->d);
-    } else if (strcmp(label, "CHAR") == 0) {
+    } else if (tk->code == CHAR) {
       printf(":%c", tk->c);
     }
     printf("\n");

@@ -1,8 +1,8 @@
 #pragma once
 
-enum {
-  ID = 0,    // keywords
-  TYPE_CHAR, // delimiters
+typedef enum {
+  ID = 0,
+  TYPE_CHAR,
   TYPE_DOUBLE,
   ELSE,
   IF,
@@ -19,7 +19,7 @@ enum {
   LACC,
   RACC,
   COMMA,
-  END, // operators
+  END,
   ADD,
   SUB,
   MUL,
@@ -39,7 +39,7 @@ enum {
   DOUBLE,
   CHAR,
   STRING
-};
+}TokenType;
 
 typedef struct Token {
   int code; // ID, TYPE_CHAR, ...
