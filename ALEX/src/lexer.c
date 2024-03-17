@@ -147,7 +147,7 @@ void handle_text(char *text) {
 
   size_t number_of_keywords = 9;
   for(size_t idx = 0; idx < number_of_keywords; ++idx) {
-    if(strcmp(text, keywords[idx])) {
+    if(strcmp(text, keywords[idx]) == 0) {
       addToken(tokens[idx]);
       return;
     }

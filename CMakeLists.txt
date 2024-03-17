@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.16)
+project(TRANSLATOR)
+
+set(TARGET_NAME translator)
+
+add_subdirectory(ALEX)
+add_subdirectory(ADSR)
+
+add_executable(${TARGET_NAME} main.c)
+
+target_link_libraries(${TARGET_NAME} ALEX)
+target_link_libraries(${TARGET_NAME} ADSR)
