@@ -3,6 +3,10 @@ project(TRANSLATOR)
 
 set(TARGET_NAME translator)
 
+if(DEBUG)
+    add_definitions(-DDEBUG=1)
+endif()
+
 add_subdirectory(ALEX)
 add_subdirectory(ADSR)
 

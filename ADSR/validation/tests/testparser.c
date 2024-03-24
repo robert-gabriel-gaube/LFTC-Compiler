@@ -19,6 +19,16 @@ int len(char s[]) {
   return i;
 }
 
+double function_test1(int a[], double b, double c, char d) {
+  double x;
+  x = (double)a[0];
+  x = (1 + 2) / (2 + 3) * (5 + 6);
+  if(((int)x + 1 == 1 && (int)x - 2 == 1) || ((int)x + 1 == 1 && (int)x - 2 == 1)) {
+    x = x + 1;
+  }
+  return -1.10;
+}
+
 void main() {
   int i;
   i = 10;

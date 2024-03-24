@@ -49,7 +49,7 @@ char *extract(const char *begin, const char *end) {
 }
 
 const char *handleComment(const char *pch) {
-  while (*pch != '\r' && *pch != '\n') {
+  while (!strchr("\n\t\0", *pch)) {
     ++pch;
   }
   return pch;
@@ -87,7 +87,7 @@ const char *handle_double_char(const char *pch) {
     TokenType if_no_values[] = {NOT, LESS, GREATER, ASSIGN};
 
     size_t idx = strchr(operators, *pch) - operators;
-    return handle_possibly_double_char(pch, *pch, if_yes_values[idx],
+    return handle_possibly_double_char(pch, '=', if_yes_values[idx],
                                        if_no_values[idx]);
   }
 }

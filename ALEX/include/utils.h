@@ -5,6 +5,13 @@
 #include <stddef.h>
 #include <stdnoreturn.h>
 
+// Used for debug purposes
+#ifdef DEBUG
+  #define PRINT_DEBUG(string) printf("%s\n", string)
+#else 
+  #define PRINT_DEBUG(string)
+#endif
+
 // prints to stderr a message prefixed with "error: " and exit the program
 // the arguments are the same as for printf
 noreturn void throwError(const char *format, ...);
