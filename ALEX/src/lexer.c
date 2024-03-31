@@ -128,6 +128,15 @@ const char *handle_number(const char *pch) {
   long number = strtol(pch, &endLong, 10);
   double numberDouble = strtod(pch, &endDouble);
 
+  // Verifications
+  if(*(endDouble - 1) == '.') {
+    throwError("Double ends in . without further digits");
+  }
+
+  if(*endDouble == 'E') {
+    throwError("Double Exponent ends without further digits");
+  }
+
   if (endLong == endDouble) {
     Token *tk = addToken(INT);
     tk->i = number;

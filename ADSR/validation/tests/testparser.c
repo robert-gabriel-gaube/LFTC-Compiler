@@ -5,7 +5,7 @@ struct Pt {
 struct Pt points[10];
 
 double max(double a, double b) {
-  if (a > b)
+  if (a < b)
     return a;
   else
     return b;
@@ -32,6 +32,7 @@ double function_test1(int a[], double b, double c, char d) {
 void main() {
   int i;
   i = 10;
+  i;
   while (i != 0) {
     puti(i);
     i = i / 2;

@@ -14,6 +14,8 @@ typedef Token *Guard;
 Guard makeGuard() { return iTk; }
 void restoreGuard(Guard g) { iTk = g; }
 
+int inStruct = 0;
+
 void tkerr(const char *fmt, ...) {
   fprintf(stderr, "error in line %d: ", iTk->line);
 
@@ -49,6 +51,8 @@ bool typeBase() {
   if (consume(STRUCT)) {
     if (consume(ID)) {
       return true;
+    } else {
+      tkerr("Missing struct name in type definition");
     }
   }
   return false;
@@ -80,8 +84,19 @@ bool varDef() {
       if (consume(SEMICOLON)) {
         PRINT_DEBUG("Found varDef");
         return true;
+      } else {
+        tkerr("Missing ';' after variable definition");
       }
+    } else {
+      tkerr("Missing varriable name");
     }
+  } else if(inStruct) {
+     if (consume(ID)) {
+      arrayDecl();
+      if (consume(SEMICOLON)) {
+        tkerr("Missing type in variable definition inside struct");
+      }
+     }
   }
 
   restoreGuard(guard);
@@ -91,6 +106,7 @@ bool varDef() {
 // structDef: STRUCT ID LACC varDef* RACC SEMICOLON
 bool structDef() {
   Guard guard = makeGuard();
+  inStruct = 1;
 
   if (consume(STRUCT)) {
     if (consume(ID)) {
@@ -100,6 +116,7 @@ bool structDef() {
         if (consume(RACC)) {
           if (consume(SEMICOLON)) {
             PRINT_DEBUG("Found structDef");
+            inStruct = 0;
             return true;
           } else {
             tkerr("Missing ';' in struct definiton");
@@ -108,9 +125,12 @@ bool structDef() {
           tkerr("Missing '}' in struct definition");
         }
       }
+    } else {
+      tkerr("Missing struct name in definition");
     }
   }
 
+  inStruct = 0;
   restoreGuard(guard);
   return false;
 }
@@ -189,6 +209,8 @@ bool exprPostfixPrim() {
     if (consume(ID)) {
       PRINT_DEBUG("Found exprPostfixPrim - struct field access");
       return exprPostfixPrim();
+    } else {
+      tkerr("Struct field access with no field name specified");
     }
   }
 
@@ -493,9 +515,8 @@ bool stmCompound() {
     if (consume(RACC)) {
       PRINT_DEBUG("Found stmCompound");
       return true;
-    }
-    else {
-      tkerr("Missing '}' after instruction");
+    } else {
+      tkerr("Not a valid instruction or missing '}' after instructions");
     }
   }
 
@@ -535,7 +556,7 @@ bool stm() {
             tkerr("Missing statement inside if");
           }
         } else {
-          tkerr("Missing ')' after if condition");
+          tkerr("if condition not correct or missing ')' after if condition");
         }
       } else {
         tkerr("Missing if condition");
@@ -557,7 +578,7 @@ bool stm() {
             tkerr("Missing statement inside while");
           }
         } else {
-          tkerr("Missing ')' after while condition");
+          tkerr("while condition not correct or missing ')' after while condition");
         }
       } else {
         tkerr("Missing while condition");
@@ -579,7 +600,15 @@ bool stm() {
   }
 
   // Simple statement
-  expr();
+  if(expr()) {
+    if(consume(SEMICOLON)) {
+      PRINT_DEBUG("Found stm - simple statement");
+      return true;
+    } else {
+      tkerr("Missing semicolon after expression");
+    }
+  }
+  
   if (consume(SEMICOLON)) {
     PRINT_DEBUG("Found stm - simple statement");
     return true;
@@ -598,6 +627,8 @@ bool fnParam() {
       arrayDecl();
       PRINT_DEBUG("Found fnParam");
       return true;
+    } else {
+      tkerr("Missing function parameter name");
     }
   }
 
@@ -628,9 +659,11 @@ bool fnDef() {
             tkerr("Not a valid set of instruction");
           }
         } else {
-          tkerr("Missing ')' in function definition");
+          tkerr("Function parameters not correctly defined or missing ')' in function definition");
         }
       }
+    } else {
+      tkerr("Missing function name");
     }
   }
 
