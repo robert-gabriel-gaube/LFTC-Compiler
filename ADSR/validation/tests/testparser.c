@@ -2,7 +2,7 @@ struct Pt {
   int x;
   int y;
 };
-struct Pt points[10];
+struct Pt points[];
 
 double max(double a, double b) {
   if (a < b)

@@ -9,8 +9,7 @@ int main(int argc, char *argv[]) {
     }
     char *file_data = loadFile(argv[1]);
     Token *tokens = tokenize(file_data);
-    puts("DONE WITH TOKENIZE");
-    showTokens(tokens);
+    // showTokens(tokens);
     parse(tokens);
     return 0;
 }
