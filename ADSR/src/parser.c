@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "parser.h"
 #include "utils.h"
@@ -17,7 +18,11 @@ void restoreGuard(Guard g) { iTk = g; }
 int inStruct = 0;
 
 void tkerr(const char *fmt, ...) {
-  fprintf(stderr, "error in line %d: ", iTk->line);
+  if(consumedTk == NULL) {
+    fprintf(stderr, "error in line %d: ", iTk->line);  
+  } else {
+    fprintf(stderr, "error in line %d: ", consumedTk->line);
+  }
 
   va_list va;
   va_start(va, fmt);
@@ -294,7 +299,15 @@ bool exprMulPrim() {
       PRINT_DEBUG("Found exprMulPrim - ( MUL | DIV ) exprCast exprMulPrim ");
       return exprMulPrim();
     } else {
-      tkerr("Missing expression after '*' or '/' ");
+      char message[50] = "Missing expression after ";
+      switch(consumedTk -> code) {
+        case MUL:
+          tkerr(strcat(message, "*"));
+          break;
+        case DIV:
+          tkerr(strcat(message, "/"));
+          break;
+      }
     }
   }
 
@@ -325,7 +338,15 @@ bool exprAddPrim() {
       PRINT_DEBUG("Found exprAddPrim - ( ADD | SUB ) exprMul exprAddPrim");
       return exprAddPrim();
     } else {
-      tkerr("Missing expression after '+' or '-' ");
+      char message[50] = "Missing expression after ";
+      switch(consumedTk -> code) {
+        case ADD:
+          tkerr(strcat(message, "+"));
+          break;
+        case SUB:
+          tkerr(strcat(message, "-"));
+          break;
+      }
     }
   }
 
@@ -358,7 +379,21 @@ bool exprRelPrim() {
       PRINT_DEBUG("Found exprRelPrim - (rel op) exprAdd exprRelPrim");
       return exprAddPrim();
     } else {
-      tkerr("Missing expression after relation operator");
+      char message[50] = "Missing expression after ";
+      switch(consumedTk -> code) {
+        case LESS:
+          tkerr(strcat(message, "<"));
+          break;
+        case LESSEQ:
+          tkerr(strcat(message, "<="));
+          break;
+        case GREATER:
+          tkerr(strcat(message, ">"));
+          break;
+        case GREATEREQ:
+          tkerr(strcat(message, ">="));
+          break;
+      }
     }
   }
 
@@ -485,7 +520,7 @@ bool exprAssign() {
         PRINT_DEBUG("Found exprAssign - exprUnary ASSIGN exprAssign");
         return true;
       } else {
-        tkerr("Missing expression after assign");
+        tkerr("Missing or invalid expression after assign");
       }
     }
   }
@@ -559,7 +594,7 @@ bool stm() {
           tkerr("if condition not correct or missing ')' after if condition");
         }
       } else {
-        tkerr("Missing if condition");
+        tkerr("Missing or invalid if condition");
       }
     } else {
       tkerr("Missing '(' before if condition");
@@ -581,7 +616,7 @@ bool stm() {
           tkerr("while condition not correct or missing ')' after while condition");
         }
       } else {
-        tkerr("Missing while condition");
+        tkerr("Missing or invalid while condition");
       }
     } else {
       tkerr("Missing '(' before while condition");
@@ -630,6 +665,11 @@ bool fnParam() {
     } else {
       tkerr("Missing function parameter name");
     }
+  } else {
+    if (consume(ID)) {
+      arrayDecl();
+      tkerr("Missing function parameter type");
+    }
   }
 
   restoreGuard(guard);
@@ -662,8 +702,8 @@ bool fnDef() {
           tkerr("Function parameters not correctly defined or missing ')' in function definition");
         }
       }
-    } else {
-      tkerr("Missing function name");
+    } else if(!arrayDecl() && !consume(SEMICOLON)) {
+      tkerr("Missing function name or '{' after struct definition");
     }
   }
 
