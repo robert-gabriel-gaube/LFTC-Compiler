@@ -9,8 +9,12 @@ endif()
 
 add_subdirectory(ALEX)
 add_subdirectory(ADSR)
+add_subdirectory(AD)
+add_subdirectory(VM)
 
 add_executable(${TARGET_NAME} main.c)
 
 target_link_libraries(${TARGET_NAME} ALEX)
 target_link_libraries(${TARGET_NAME} ADSR)
+target_link_libraries(${TARGET_NAME} AD)
+target_link_libraries(${TARGET_NAME} VM)

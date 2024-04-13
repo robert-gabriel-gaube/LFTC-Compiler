@@ -4,11 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ad.h"
 #include "parser.h"
 #include "utils.h"
 
 Token *iTk = NULL;        // the iterator in the tokens list
 Token *consumedTk = NULL; // the last consumed token
+
+Symbol *owner = NULL;
 
 typedef Token *Guard;
 
@@ -18,8 +21,8 @@ void restoreGuard(Guard g) { iTk = g; }
 int inStruct = 0;
 
 void tkerr(const char *fmt, ...) {
-  if(consumedTk == NULL) {
-    fprintf(stderr, "error in line %d: ", iTk->line);  
+  if (consumedTk == NULL) {
+    fprintf(stderr, "error in line %d: ", iTk->line);
   } else {
     fprintf(stderr, "error in line %d: ", consumedTk->line);
   }
@@ -43,18 +46,27 @@ bool consume(int code) {
 }
 
 // typeBase: TYPE_INT | TYPE_DOUBLE | TYPE_CHAR | STRUCT ID
-bool typeBase() {
+bool typeBase(Type *t) {
+  t->n = -1;
   if (consume(TYPE_INT)) {
+    t->tb = TB_INT;
     return true;
   }
   if (consume(TYPE_DOUBLE)) {
+    t->tb = TB_DOUBLE;
     return true;
   }
   if (consume(TYPE_CHAR)) {
+    t->tb = TB_CHAR;
     return true;
   }
   if (consume(STRUCT)) {
     if (consume(ID)) {
+      t->tb = TB_STRUCT;
+      t->s = findSymbol(consumedTk->text);
+      if (!t->s) {
+        tkerr("Undefined structure: %s", consumedTk->text);
+      }
       return true;
     } else {
       tkerr("Missing struct name in type definition");
@@ -64,13 +76,17 @@ bool typeBase() {
 }
 
 // arrayDecl: LBRACKET INT? RBRACKET
-bool arrayDecl() {
+bool arrayDecl(Type *t) {
   Guard guard = makeGuard();
 
   if (consume(LBRACKET)) {
-    consume(INT);
+    if (consume(INT)) {
+      t->n = consumedTk->i;
+    } else {
+      t->n = 0;
+    }
     if (consume(RBRACKET)) {
-      PRINT_DEBUG("Found arrayDecl");
+      PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found arrayDecl");
       return true;
     }
   }
@@ -82,12 +98,42 @@ bool arrayDecl() {
 // varDef: typeBase ID arrayDecl? SEMICOLON
 bool varDef() {
   Guard guard = makeGuard();
+  Type t;
 
-  if (typeBase()) {
+  if (typeBase(&t)) {
     if (consume(ID)) {
-      arrayDecl();
+      Token *tkName = consumedTk;
+      if (arrayDecl(&t)) {
+        PRINT_DEBUG(MEDIUM_VERBOSITY,
+                    "[AD] Found var definition with array of size n = %d", t.n);
+        if (t.n == 0) {
+          tkerr("A vector variable must have a specified dimension");
+        }
+      }
       if (consume(SEMICOLON)) {
-        PRINT_DEBUG("Found varDef");
+        PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found varDef");
+        Symbol *var = findSymbolInDomain(symTable, tkName->text);
+        if (var) {
+          tkerr("Symbol redefinition: %s", tkName->text);
+        }
+        var = newSymbol(tkName->text, SK_VAR);
+        var->type = t;
+        var->owner = owner;
+        addSymbolToDomain(symTable, var);
+        if (owner) {
+          switch (owner->kind) {
+          case SK_FN:
+            var->varIdx = symbolsLen(owner->fn.locals);
+            addSymbolToList(&owner->fn.locals, dupSymbol(var));
+            break;
+          case SK_STRUCT:
+            var->varIdx = typeSize(&owner->type);
+            addSymbolToList(&owner->structMembers, dupSymbol(var));
+            break;
+          }
+        } else {
+          var->varMem = safeAlloc(typeSize(&t));
+        }
         return true;
       } else {
         tkerr("Missing ';' after variable definition");
@@ -95,13 +141,13 @@ bool varDef() {
     } else {
       tkerr("Missing varriable name");
     }
-  } else if(inStruct) {
-     if (consume(ID)) {
-      arrayDecl();
+  } else if (inStruct) {
+    if (consume(ID)) {
+      arrayDecl(&t);
       if (consume(SEMICOLON)) {
         tkerr("Missing type in variable definition inside struct");
       }
-     }
+    }
   }
 
   restoreGuard(guard);
@@ -115,13 +161,27 @@ bool structDef() {
 
   if (consume(STRUCT)) {
     if (consume(ID)) {
+      Token *tkName = consumedTk;
       if (consume(LACC)) {
+        Symbol *s = findSymbolInDomain(symTable, tkName->text);
+        if (s) {
+          tkerr("symbol redefinition: %s", tkName->text);
+        }
+        s = addSymbolToDomain(symTable, newSymbol(tkName->text, SK_STRUCT));
+        s->type.tb = TB_STRUCT;
+        s->type.s = s;
+        s->type.n = -1;
+        pushDomain();
+        owner = s;
         while (varDef())
           ;
         if (consume(RACC)) {
           if (consume(SEMICOLON)) {
-            PRINT_DEBUG("Found structDef");
+            PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found structDef");
             inStruct = 0;
+            owner = NULL;
+            //showDomain(symTable, tkName->text);
+            dropDomain();
             return true;
           } else {
             tkerr("Missing ';' in struct definiton");
@@ -136,6 +196,7 @@ bool structDef() {
   }
 
   inStruct = 0;
+
   restoreGuard(guard);
   return false;
 }
@@ -161,7 +222,8 @@ bool exprPrimary() {
         tkerr("Missing ')' in function call");
       }
     }
-    PRINT_DEBUG("Found primaryExpr - function call or simple ID");
+    PRINT_DEBUG(HIGH_VERBOSITY,
+                "[ADSR] Found primaryExpr - function call or simple ID");
     return true;
   }
 
@@ -169,7 +231,7 @@ bool exprPrimary() {
 
   // Simple atom
   if (consume(INT) || consume(DOUBLE) || consume(CHAR) || consume(STRING)) {
-    PRINT_DEBUG("Found primaryExpr - atom");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found primaryExpr - atom");
     return true;
   }
 
@@ -177,7 +239,8 @@ bool exprPrimary() {
   if (consume(LPAR)) {
     if (expr()) {
       if (consume(RPAR)) {
-        PRINT_DEBUG("Found primaryExpr - expression with ()");
+        PRINT_DEBUG(HIGH_VERBOSITY,
+                    "[ADSR] Found primaryExpr - expression with ()");
         return true;
       } else {
         tkerr("Missing ')' at the end of expression");
@@ -199,7 +262,8 @@ bool exprPostfixPrim() {
   if (consume(LBRACKET)) {
     if (expr()) {
       if (consume(RBRACKET)) {
-        PRINT_DEBUG("Found exprPostfixPrim - array indexing");
+        PRINT_DEBUG(HIGH_VERBOSITY,
+                    "[ADSR] Found exprPostfixPrim - array indexing");
         return exprPostfixPrim();
       } else {
         tkerr("Missing ']' in array indexing");
@@ -212,7 +276,8 @@ bool exprPostfixPrim() {
   // Struct field access
   if (consume(DOT)) {
     if (consume(ID)) {
-      PRINT_DEBUG("Found exprPostfixPrim - struct field access");
+      PRINT_DEBUG(HIGH_VERBOSITY,
+                  "[ADSR] Found exprPostfixPrim - struct field access");
       return exprPostfixPrim();
     } else {
       tkerr("Struct field access with no field name specified");
@@ -220,7 +285,7 @@ bool exprPostfixPrim() {
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprPostfixPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprPostfixPrim - epsilon");
   return true; // e
 }
 
@@ -229,7 +294,7 @@ bool exprPostfix() {
   Guard guard = makeGuard();
 
   if (exprPrimary()) {
-    PRINT_DEBUG("Inside exprPrimary");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Inside exprPrimary");
     return exprPostfixPrim();
   }
 
@@ -243,7 +308,8 @@ bool exprUnary() {
 
   if (consume(SUB) || consume(NOT)) {
     if (exprUnary()) {
-      PRINT_DEBUG("Found exprUnary - (SUB | NOT) exprUnary()");
+      PRINT_DEBUG(HIGH_VERBOSITY,
+                  "[ADSR] Found exprUnary - (SUB | NOT) exprUnary()");
       return true;
     } else {
       tkerr("Missing expression after sub or not");
@@ -253,7 +319,7 @@ bool exprUnary() {
   restoreGuard(guard);
 
   if (exprPostfix()) {
-    PRINT_DEBUG("Found exprUnary - exprPostfix");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprUnary - exprPostfix");
     return true;
   }
 
@@ -264,13 +330,19 @@ bool exprUnary() {
 // exprCast: LPAR typeBase arrayDecl? RPAR exprCast | exprUnary
 bool exprCast() {
   Guard guard = makeGuard();
+  Type arraySubscriptType;
 
   if (consume(LPAR)) {
-    if (typeBase()) {
-      arrayDecl();
+    Type t;
+    if (typeBase(&t)) {
+      if (arrayDecl(&t)) {
+        PRINT_DEBUG(MEDIUM_VERBOSITY,
+                    "[AD] Found array subscript in exprCast with n = %d", t.n);
+      }
       if (consume(RPAR)) {
         if (exprCast()) {
-          PRINT_DEBUG("Found exprCast - cast expression");
+          PRINT_DEBUG(HIGH_VERBOSITY,
+                      "[ADSR] Found exprCast - cast expression");
           return true;
         } else {
           tkerr("Missing casting expression after ')'");
@@ -282,7 +354,7 @@ bool exprCast() {
   restoreGuard(guard);
 
   if (exprUnary()) {
-    PRINT_DEBUG("Found exprCast - exprUnary");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprCast - exprUnary");
     return true;
   }
 
@@ -296,23 +368,25 @@ bool exprMulPrim() {
 
   if (consume(MUL) || consume(DIV)) {
     if (exprCast()) {
-      PRINT_DEBUG("Found exprMulPrim - ( MUL | DIV ) exprCast exprMulPrim ");
+      PRINT_DEBUG(
+          HIGH_VERBOSITY,
+          "[ADSR] Found exprMulPrim - ( MUL | DIV ) exprCast exprMulPrim ");
       return exprMulPrim();
     } else {
       char message[50] = "Missing expression after ";
-      switch(consumedTk -> code) {
-        case MUL:
-          tkerr(strcat(message, "*"));
-          break;
-        case DIV:
-          tkerr(strcat(message, "/"));
-          break;
+      switch (consumedTk->code) {
+      case MUL:
+        tkerr(strcat(message, "*"));
+        break;
+      case DIV:
+        tkerr(strcat(message, "/"));
+        break;
       }
     }
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprMulPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprMulPrim - epsilon");
   return true; // e
 }
 
@@ -321,7 +395,7 @@ bool exprMul() {
   Guard guard = makeGuard();
 
   if (exprCast()) {
-    PRINT_DEBUG("Inside exprMul");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Inside exprMul");
     return exprMulPrim();
   }
 
@@ -335,23 +409,25 @@ bool exprAddPrim() {
 
   if (consume(ADD) || consume(SUB)) {
     if (exprMul()) {
-      PRINT_DEBUG("Found exprAddPrim - ( ADD | SUB ) exprMul exprAddPrim");
+      PRINT_DEBUG(
+          HIGH_VERBOSITY,
+          "[ADSR] Found exprAddPrim - ( ADD | SUB ) exprMul exprAddPrim");
       return exprAddPrim();
     } else {
       char message[50] = "Missing expression after ";
-      switch(consumedTk -> code) {
-        case ADD:
-          tkerr(strcat(message, "+"));
-          break;
-        case SUB:
-          tkerr(strcat(message, "-"));
-          break;
+      switch (consumedTk->code) {
+      case ADD:
+        tkerr(strcat(message, "+"));
+        break;
+      case SUB:
+        tkerr(strcat(message, "-"));
+        break;
       }
     }
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprAddPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprAddPrim - epsilon");
   return true; // e
 }
 
@@ -360,7 +436,7 @@ bool exprAdd() {
   Guard guard = makeGuard();
 
   if (exprMul()) {
-    PRINT_DEBUG("Found exprAdd");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprAdd");
     return exprAddPrim();
   }
 
@@ -376,29 +452,30 @@ bool exprRelPrim() {
   if (consume(LESS) || consume(LESSEQ) || consume(GREATER) ||
       consume(GREATEREQ)) {
     if (exprAdd()) {
-      PRINT_DEBUG("Found exprRelPrim - (rel op) exprAdd exprRelPrim");
+      PRINT_DEBUG(HIGH_VERBOSITY,
+                  "[ADSR] Found exprRelPrim - (rel op) exprAdd exprRelPrim");
       return exprAddPrim();
     } else {
       char message[50] = "Missing expression after ";
-      switch(consumedTk -> code) {
-        case LESS:
-          tkerr(strcat(message, "<"));
-          break;
-        case LESSEQ:
-          tkerr(strcat(message, "<="));
-          break;
-        case GREATER:
-          tkerr(strcat(message, ">"));
-          break;
-        case GREATEREQ:
-          tkerr(strcat(message, ">="));
-          break;
+      switch (consumedTk->code) {
+      case LESS:
+        tkerr(strcat(message, "<"));
+        break;
+      case LESSEQ:
+        tkerr(strcat(message, "<="));
+        break;
+      case GREATER:
+        tkerr(strcat(message, ">"));
+        break;
+      case GREATEREQ:
+        tkerr(strcat(message, ">="));
+        break;
       }
     }
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprRelPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprRelPrim - epsilon");
   return true; // e
 }
 
@@ -407,7 +484,7 @@ bool exprRel() {
   Guard guard = makeGuard();
 
   if (exprAdd()) {
-    PRINT_DEBUG("Found exprRel");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprRel");
     return exprRelPrim();
   }
 
@@ -422,7 +499,9 @@ bool exprEqPrim() {
 
   if (consume(EQUAL) || consume(NOTEQ)) {
     if (exprRel()) {
-      PRINT_DEBUG("Found exprEqPrim - ( EQUAL | NOTEQ ) exprRel exprEqPrim");
+      PRINT_DEBUG(
+          HIGH_VERBOSITY,
+          "[ADSR] Found exprEqPrim - ( EQUAL | NOTEQ ) exprRel exprEqPrim");
       return exprEqPrim();
     } else {
       tkerr("Missing expression after equal or noteq");
@@ -430,7 +509,7 @@ bool exprEqPrim() {
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprEqPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprEqPrim - epsilon");
   return true; // e
 }
 
@@ -439,7 +518,7 @@ bool exprEq() {
   Guard guard = makeGuard();
 
   if (exprRel()) {
-    PRINT_DEBUG("Found exprEq");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprEq");
     return exprEqPrim();
   }
 
@@ -454,7 +533,8 @@ bool exprAndPrim() {
 
   if (consume(AND)) {
     if (exprEq()) {
-      PRINT_DEBUG("Found exprAndPrim - AND exprEq exprAndPrim");
+      PRINT_DEBUG(HIGH_VERBOSITY,
+                  "[ADSR] Found exprAndPrim - AND exprEq exprAndPrim");
       return exprAndPrim();
     } else {
       tkerr("Missing expression after and");
@@ -462,7 +542,7 @@ bool exprAndPrim() {
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprAndPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprAndPrim - epsilon");
   return true; // e
 }
 
@@ -471,7 +551,7 @@ bool exprAnd() {
   Guard guard = makeGuard();
 
   if (exprEq()) {
-    PRINT_DEBUG("Found exprAnd");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprAnd");
     return exprAndPrim();
   }
 
@@ -485,7 +565,8 @@ bool exprOrPrim() {
 
   if (consume(OR)) {
     if (exprAnd()) {
-      PRINT_DEBUG("Found exprOrPrim - OR exprAnd exprOrPrim");
+      PRINT_DEBUG(HIGH_VERBOSITY,
+                  "[ADSR] Found exprOrPrim - OR exprAnd exprOrPrim");
       return exprOrPrim();
     } else {
       tkerr("Missing expression after or");
@@ -493,7 +574,7 @@ bool exprOrPrim() {
   }
 
   restoreGuard(guard);
-  PRINT_DEBUG("Found exprOrPrim - epsilon");
+  PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprOrPrim - epsilon");
   return true; // e
 }
 
@@ -502,7 +583,7 @@ bool exprOr() {
   Guard guard = makeGuard();
 
   if (exprAnd()) {
-    PRINT_DEBUG("Found exprOr");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprOr");
     return exprOrPrim();
   }
 
@@ -517,7 +598,8 @@ bool exprAssign() {
   if (exprUnary()) {
     if (consume(ASSIGN)) {
       if (exprAssign()) {
-        PRINT_DEBUG("Found exprAssign - exprUnary ASSIGN exprAssign");
+        PRINT_DEBUG(HIGH_VERBOSITY,
+                    "[ADSR] Found exprAssign - exprUnary ASSIGN exprAssign");
         return true;
       } else {
         tkerr("Missing or invalid expression after assign");
@@ -528,7 +610,7 @@ bool exprAssign() {
   restoreGuard(guard);
 
   if (exprOr()) {
-    PRINT_DEBUG("Found exprAssign - exprOr");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found exprAssign - exprOr");
     return true;
   }
 
@@ -541,14 +623,21 @@ bool expr() { return exprAssign(); }
 
 bool stm();
 // stmCompound: LACC ( varDef | stm )* RACC
-bool stmCompound() {
+bool stmCompound(bool newDomain) {
   Guard guard = makeGuard();
 
   if (consume(LACC)) {
+    if (newDomain) {
+      pushDomain();
+    }
     while (varDef() || stm())
       ;
     if (consume(RACC)) {
-      PRINT_DEBUG("Found stmCompound");
+      PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stmCompound");
+      if (newDomain) {
+        //showDomain(symTable, "compound statement");
+        dropDomain();
+      }
       return true;
     } else {
       tkerr("Not a valid instruction or missing '}' after instructions");
@@ -567,8 +656,8 @@ bool stmCompound() {
 bool stm() {
   Guard guard = makeGuard();
 
-  if (stmCompound()) {
-    PRINT_DEBUG("Found stm - compound statement");
+  if (stmCompound(true)) {
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - compound statement");
     return true;
   }
 
@@ -585,7 +674,7 @@ bool stm() {
                 tkerr("Missing statement inside else");
               }
             }
-            PRINT_DEBUG("Found stm - if statement");
+            PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - if statement");
             return true;
           } else {
             tkerr("Missing statement inside if");
@@ -607,13 +696,14 @@ bool stm() {
       if (expr()) {
         if (consume(RPAR)) {
           if (stm()) {
-            PRINT_DEBUG("Found stm - while statement");
+            PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - while statement");
             return true;
           } else {
             tkerr("Missing statement inside while");
           }
         } else {
-          tkerr("while condition not correct or missing ')' after while condition");
+          tkerr("while condition not correct or missing ')' after while "
+                "condition");
         }
       } else {
         tkerr("Missing or invalid while condition");
@@ -627,7 +717,7 @@ bool stm() {
   if (consume(RETURN)) {
     expr();
     if (consume(SEMICOLON)) {
-      PRINT_DEBUG("Found stm - return statement");
+      PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - return statement");
       return true;
     } else {
       tkerr("Missing ';' after return statement");
@@ -635,17 +725,17 @@ bool stm() {
   }
 
   // Simple statement
-  if(expr()) {
-    if(consume(SEMICOLON)) {
-      PRINT_DEBUG("Found stm - simple statement");
+  if (expr()) {
+    if (consume(SEMICOLON)) {
+      PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - simple statement");
       return true;
     } else {
       tkerr("Missing semicolon after expression");
     }
   }
-  
+
   if (consume(SEMICOLON)) {
-    PRINT_DEBUG("Found stm - simple statement");
+    PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - simple statement");
     return true;
   }
 
@@ -656,18 +746,34 @@ bool stm() {
 // fnParam: typeBase ID arrayDecl?
 bool fnParam() {
   Guard guard = makeGuard();
+  Type t;
 
-  if (typeBase()) {
+  if (typeBase(&t)) {
     if (consume(ID)) {
-      arrayDecl();
-      PRINT_DEBUG("Found fnParam");
+      Token *tkName = consumedTk;
+      if (arrayDecl(&t)) {
+        PRINT_DEBUG(MEDIUM_VERBOSITY, "[AD] Found fnParam array with n = %d",
+                    t.n);
+        t.n = 0;
+      }
+      Symbol *param = findSymbolInDomain(symTable, tkName->text);
+      if (param) {
+        tkerr("Symbol redefinition: %s", tkName->text);
+      }
+      param = newSymbol(tkName->text, SK_PARAM);
+      param->type = t;
+      param->owner = owner;
+      param->paramIdx = symbolsLen(owner->fn.params);
+      addSymbolToDomain(symTable, param);
+      addSymbolToList(&owner->fn.params, dupSymbol(param));
+      PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found fnParam");
       return true;
     } else {
       tkerr("Missing function parameter name");
     }
   } else {
     if (consume(ID)) {
-      arrayDecl();
+      arrayDecl(&t);
       tkerr("Missing function parameter type");
     }
   }
@@ -680,10 +786,24 @@ bool fnParam() {
 //             stmCompound
 bool fnDef() {
   Guard guard = makeGuard();
+  Type t;
 
-  if (typeBase() || consume(VOID)) {
+  if (typeBase(&t) || consume(VOID)) {
+    if (consumedTk->code == VOID) {
+      t.tb = TB_VOID;
+    }
     if (consume(ID)) {
+      Token *tkName = consumedTk;
       if (consume(LPAR)) {
+        Symbol *fn = findSymbolInDomain(symTable, tkName->text);
+        if (fn) {
+          tkerr("Symbol redefinition: %s", tkName->text);
+        }
+        fn = newSymbol(tkName->text, SK_FN);
+        fn->type = t;
+        addSymbolToDomain(symTable, fn);
+        owner = fn;
+        pushDomain();
         if (fnParam()) {
           while (consume(COMMA)) {
             if (!fnParam()) {
@@ -692,17 +812,21 @@ bool fnDef() {
           }
         }
         if (consume(RPAR)) {
-          if (stmCompound()) {
-            PRINT_DEBUG("Found fnDef");
+          if (stmCompound(false)) {
+            PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found fnDef");
+            //showDomain(symTable, tkName->text);
+            dropDomain();
+            owner = NULL;
             return true;
           } else {
             tkerr("Not a valid set of instruction");
           }
         } else {
-          tkerr("Function parameters not correctly defined or missing ')' in function definition");
+          tkerr("Function parameters not correctly defined or missing ')' in "
+                "function definition");
         }
       }
-    } else if(!arrayDecl() && !consume(SEMICOLON)) {
+    } else if (!arrayDecl(&t) && !consume(SEMICOLON)) {
       tkerr("Missing function name or '{' after struct definition");
     }
   }
@@ -715,11 +839,11 @@ bool fnDef() {
 bool unit() {
   for (;;) {
     if (structDef()) {
-      printf("FOUND STRUCT DEF\n");
+      PRINT_DEBUG(LOW_VERBOSITY, "FOUND STRUCT DEF");
     } else if (fnDef()) {
-      printf("FOUND FUNC DEF\n");
+      PRINT_DEBUG(LOW_VERBOSITY, "FOUND FUNC DEF");
     } else if (varDef()) {
-      printf("FOUND VAR DEF\n");
+      PRINT_DEBUG(LOW_VERBOSITY, "FOUND VAR DEF");
     } else
       break;
   }
@@ -731,6 +855,8 @@ bool unit() {
 
 void parse(Token *tokens) {
   iTk = tokens;
-  if (!unit())
+  pushDomain();
+  if (!unit()) {
     tkerr("syntax error");
+  }
 }

@@ -1,0 +1,21 @@
+// Atentie: campul "mem" difera de la calculator la calculator
+
+// domain: global
+int x;  // size=4, mem=000001B2244101B0
+char y; // size=1, mem=000001B224410230
+double z;       // size=8, mem=000001B22440D520
+double p[100];  // size=800, mem=000001B224412810
+struct S1{
+        int i;  // size=4, idx=0
+        double d[2];    // size=16, idx=4
+        char x; // size=1, idx=20
+        };      // size=21
+struct S1 p1;   // size=21, mem=000001B224411E50
+struct S1 vp[10];       // size=210, mem=000001B224414E60
+double sum(double x[] /*size=8, idx=0*/, int n /*size=4, idx=1*/){
+        double r;       // size=8, idx=0
+        int i;  // size=4, idx=1
+        double n;       // size=8, idx=2
+        }
+void f(struct S1 p /*size=21, idx=0*/){
+        }

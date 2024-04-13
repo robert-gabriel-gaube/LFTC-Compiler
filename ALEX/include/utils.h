@@ -5,11 +5,18 @@
 #include <stddef.h>
 #include <stdnoreturn.h>
 
+#define HIGH_VERBOSITY 0
+#define MEDIUM_VERBOSITY 1
+#define LOW_VERBOSITY 2
+#define VERY_LOW_VERBOSITY 3
+
+#define VERBOSITY_LEVEL 3
+
 // Used for debug purposes
 #ifdef DEBUG
-  #define PRINT_DEBUG(string) printf("%s\n", string)
+  #define PRINT_DEBUG(verbosity, format, ...)   if(verbosity >= VERBOSITY_LEVEL) printf(format "\n", ##__VA_ARGS__), fflush(stdout)
 #else 
-  #define PRINT_DEBUG(string)
+  #define PRINT_DEBUG(verbosity, ...)
 #endif
 
 // prints to stderr a message prefixed with "error: " and exit the program

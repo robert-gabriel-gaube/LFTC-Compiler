@@ -1,6 +1,7 @@
 #include "lexer.h"
 #include "utils.h"
 #include "parser.h"
+#include "ad.h"
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
@@ -11,5 +12,6 @@ int main(int argc, char *argv[]) {
     Token *tokens = tokenize(file_data);
     // showTokens(tokens);
     parse(tokens);
+    showDomain(symTable, "Global");
     return 0;
 }
