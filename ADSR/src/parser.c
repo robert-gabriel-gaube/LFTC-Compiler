@@ -7,6 +7,7 @@
 #include "ad.h"
 #include "parser.h"
 #include "utils.h"
+#include "at.h"
 
 Token *iTk = NULL;        // the iterator in the tokens list
 Token *consumedTk = NULL; // the last consumed token
