@@ -222,11 +222,6 @@ bool exprPrimary(Ret *r) {
       Ret rArg;
       Symbol *param = s->fn.params;
       if (expr(&rArg)) {
-        printf("rArg:\n\tTypeBase: %d\n\tn: %d\n", rArg.type.tb, rArg.type.n);
-        if(rArg.type.tb == TB_STRUCT) {
-          printf("Hello?\n");
-          printf("\tSymName: %s\b", rArg.type.s->name);
-        }
         if (!param) {
           tkerr("too many arguments in function call");
         }
@@ -236,7 +231,7 @@ bool exprPrimary(Ret *r) {
         }
         param = param->next;
         while (consume(COMMA)) {
-          if (!expr(&rArg)) {
+          if (expr(&rArg)) {
             if (!param) {
               tkerr("too many arguments in function call");
             }
@@ -245,7 +240,8 @@ bool exprPrimary(Ret *r) {
                     "parameter type");
             }
             param = param->next;
-            tkerr("Expected expression after ','");
+          } else {
+              tkerr("Expected expression after ','");
           }
         }
       }
@@ -333,6 +329,8 @@ bool exprPostfixPrim(Ret *r) {
       } else {
         tkerr("Missing ']' in array indexing");
       }
+    } else {
+      tkerr("Missing value inside array indexing");
     }
   }
 
@@ -871,7 +869,7 @@ bool stm() {
 
   // RETURN structure RETURN expr? SEMICOLON
   if (consume(RETURN)) {
-    if (expr(&rCond)) {
+    if (expr(&rExpr)) {
       if (owner->type.tb == TB_VOID)
         tkerr("a void function cannot return a value");
       if (!canBeScalar(&rExpr))
