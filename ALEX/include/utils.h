@@ -10,7 +10,7 @@
 #define LOW_VERBOSITY 2
 #define VERY_LOW_VERBOSITY 3
 
-#define VERBOSITY_LEVEL 3
+#define VERBOSITY_LEVEL 0
 
 // Used for debug purposes
 #ifdef DEBUG
