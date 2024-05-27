@@ -6,18 +6,36 @@
 
 #include "ad.h"
 #include "at.h"
+#include "gc.h"
 #include "parser.h"
 #include "utils.h"
+#include "vm.h"
 
 Token *iTk = NULL;        // the iterator in the tokens list
 Token *consumedTk = NULL; // the last consumed token
 
 Symbol *owner = NULL;
 
-typedef Token *Guard;
 
-Guard makeGuard() { return iTk; }
-void restoreGuard(Guard g) { iTk = g; }
+typedef struct {
+  Instr *startInstr;
+  Token *guardedToken;
+} Guard;
+
+Guard makeGuard() {
+  Guard guard;
+
+  guard.startInstr=owner?lastInstr(owner->fn.instr):NULL;
+  guard.guardedToken = iTk;
+
+  return guard; 
+}
+void restoreGuard(Guard g) { 
+  iTk = g.guardedToken;
+   if(owner) {
+    delInstrAfter(g.startInstr);
+   }
+}
 
 int inStruct = 0;
 
@@ -229,6 +247,9 @@ bool exprPrimary(Ret *r) {
           tkerr("in call, cannot convert the argument type to the parameter "
                 "type");
         }
+        addRVal(&owner->fn.instr, rArg.lval, &rArg.type);
+        insertConvIfNeeded(lastInstr(owner->fn.instr), &rArg.type,
+                           &param->type);
         param = param->next;
         while (consume(COMMA)) {
           if (expr(&rArg)) {
@@ -239,9 +260,12 @@ bool exprPrimary(Ret *r) {
               tkerr("in call, cannot convert the argument type to the "
                     "parameter type");
             }
+            addRVal(&owner->fn.instr, rArg.lval, &rArg.type);
+            insertConvIfNeeded(lastInstr(owner->fn.instr), &rArg.type,
+                               &param->type);
             param = param->next;
           } else {
-              tkerr("Expected expression after ','");
+            tkerr("Expected expression after ','");
           }
         }
       }
@@ -249,6 +273,12 @@ bool exprPrimary(Ret *r) {
         PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found primaryExpr - function call");
         if (param) {
           tkerr("too few arguments in function call");
+        }
+        if (s->fn.extFnPtr) {
+          addInstr(&owner->fn.instr, OP_CALL_EXT)->arg.extFnPtr =
+              s->fn.extFnPtr;
+        } else {
+          addInstr(&owner->fn.instr, OP_CALL)->arg.instr = s->fn.instr;
         }
         *r = (Ret){s->type, false, true};
         return true;
@@ -260,6 +290,32 @@ bool exprPrimary(Ret *r) {
     if (s->kind == SK_FN) {
       tkerr("a function can only be called");
     }
+    if (s->kind == SK_VAR) {
+      if (s->owner == NULL) { // global variables
+        addInstr(&owner->fn.instr, OP_ADDR)->arg.p = s->varMem;
+      } else { // local variables
+        switch (s->type.tb) {
+        case TB_INT:
+          addInstrWithInt(&owner->fn.instr, OP_FPADDR_I, s->varIdx + 1);
+          break;
+        case TB_DOUBLE:
+          addInstrWithInt(&owner->fn.instr, OP_FPADDR_F, s->varIdx + 1);
+          break;
+        }
+      }
+    }
+    if (s->kind == SK_PARAM) {
+      switch (s->type.tb) {
+      case TB_INT:
+        addInstrWithInt(&owner->fn.instr, OP_FPADDR_I,
+                        s->paramIdx - symbolsLen(s->owner->fn.params) - 1);
+        break;
+      case TB_DOUBLE:
+        addInstrWithInt(&owner->fn.instr, OP_FPADDR_F,
+                        s->paramIdx - symbolsLen(s->owner->fn.params) - 1);
+        break;
+      }
+    }
     *r = (Ret){s->type, true, s->type.n >= 0};
     return true;
   }
@@ -269,10 +325,12 @@ bool exprPrimary(Ret *r) {
   // Simple atom
   if (consume(INT)) {
     PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found primaryExpr - atom INT");
+    addInstrWithInt(&owner->fn.instr, OP_PUSH_I, consumedTk->i);
     *r = (Ret){{TB_INT, NULL, -1}, false, true};
     return true;
   } else if (consume(DOUBLE)) {
     PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found primaryExpr - atom DOUBLE");
+    addInstrWithDouble(&owner->fn.instr, OP_PUSH_F, consumedTk->d);
     *r = (Ret){{TB_DOUBLE, NULL, -1}, false, true};
     return true;
   } else if (consume(CHAR)) {
@@ -457,8 +515,14 @@ bool exprCast(Ret *r) {
 // epxrMulPrim: ( MUL | DIV ) exprCast exprMulPrim | e
 bool exprMulPrim(Ret *r) {
   Guard guard = makeGuard();
+  Token *op = NULL;
 
   if (consume(MUL) || consume(DIV)) {
+    op = consumedTk;
+
+    Instr *lastLeft = lastInstr(owner->fn.instr);
+    addRVal(&owner->fn.instr, r->lval, &r->type);
+
     Ret right;
     if (exprCast(&right)) {
       PRINT_DEBUG(
@@ -468,6 +532,32 @@ bool exprMulPrim(Ret *r) {
       if (!arithTypeTo(&r->type, &right.type, &tDst)) {
         tkerr("invalid operand type for * or /");
       }
+      addRVal(&owner->fn.instr, right.lval, &right.type);
+      insertConvIfNeeded(lastLeft, &r->type, &tDst);
+      insertConvIfNeeded(lastInstr(owner->fn.instr), &right.type, &tDst);
+      switch (op->code) {
+      case MUL:
+        switch (tDst.tb) {
+        case TB_INT:
+          addInstr(&owner->fn.instr, OP_MUL_I);
+          break;
+        case TB_DOUBLE:
+          addInstr(&owner->fn.instr, OP_MUL_F);
+          break;
+        }
+        break;
+      case DIV:
+        switch (tDst.tb) {
+        case TB_INT:
+          addInstr(&owner->fn.instr, OP_DIV_I);
+          break;
+        case TB_DOUBLE:
+          addInstr(&owner->fn.instr, OP_DIV_F);
+          break;
+        }
+        break;
+      }
+
       *r = (Ret){tDst, false, true};
       return exprMulPrim(r);
     } else {
@@ -504,8 +594,13 @@ bool exprMul(Ret *r) {
 // exprAddPrim: ( ADD | SUB ) exprMul exprAddPrim | e
 bool exprAddPrim(Ret *r) {
   Guard guard = makeGuard();
+  Token *op = NULL;
 
   if (consume(ADD) || consume(SUB)) {
+    op = consumedTk;
+
+    Instr *lastLeft = lastInstr(owner->fn.instr);
+    addRVal(&owner->fn.instr, r->lval, &r->type);
     Ret right;
     if (exprMul(&right)) {
       PRINT_DEBUG(
@@ -514,6 +609,31 @@ bool exprAddPrim(Ret *r) {
       Type tDst;
       if (!arithTypeTo(&r->type, &right.type, &tDst)) {
         tkerr("invalid operand type for + or -");
+      }
+      addRVal(&owner->fn.instr, right.lval, &right.type);
+      insertConvIfNeeded(lastLeft, &r->type, &tDst);
+      insertConvIfNeeded(lastInstr(owner->fn.instr), &right.type, &tDst);
+      switch (op->code) {
+      case ADD:
+        switch (tDst.tb) {
+        case TB_INT:
+          addInstr(&owner->fn.instr, OP_ADD_I);
+          break;
+        case TB_DOUBLE:
+          addInstr(&owner->fn.instr, OP_ADD_F);
+          break;
+        }
+        break;
+      case SUB:
+        switch (tDst.tb) {
+        case TB_INT:
+          addInstr(&owner->fn.instr, OP_SUB_I);
+          break;
+        case TB_DOUBLE:
+          addInstr(&owner->fn.instr, OP_SUB_F);
+          break;
+        }
+        break;
       }
       *r = (Ret){tDst, false, true};
       return exprAddPrim(r);
@@ -552,9 +672,15 @@ bool exprAdd(Ret *r) {
 //              | e
 bool exprRelPrim(Ret *r) {
   Guard guard = makeGuard();
+  Token *op = NULL;
 
   if (consume(LESS) || consume(LESSEQ) || consume(GREATER) ||
       consume(GREATEREQ)) {
+    op = consumedTk;
+
+    Instr *lastLeft = lastInstr(owner->fn.instr);
+    addRVal(&owner->fn.instr, r->lval, &r->type);
+
     Ret right;
     if (exprAdd(&right)) {
       PRINT_DEBUG(HIGH_VERBOSITY,
@@ -563,6 +689,23 @@ bool exprRelPrim(Ret *r) {
       if (!arithTypeTo(&r->type, &right.type, &tDst)) {
         tkerr("invalid operand type for <, <=, >, >=");
       }
+
+      addRVal(&owner->fn.instr, right.lval, &right.type);
+      insertConvIfNeeded(lastLeft, &r->type, &tDst);
+      insertConvIfNeeded(lastInstr(owner->fn.instr), &right.type, &tDst);
+      switch (op->code) {
+      case LESS:
+        switch (tDst.tb) {
+        case TB_INT:
+          addInstr(&owner->fn.instr, OP_LESS_I);
+          break;
+        case TB_DOUBLE:
+          addInstr(&owner->fn.instr, OP_LESS_F);
+          break;
+        }
+        break;
+      }
+
       *r = (Ret){{TB_INT, NULL, -1}, false, true};
       return exprRelPrim(r);
     } else {
@@ -729,6 +872,18 @@ bool exprAssign(Ret *r) {
       if (exprAssign(r)) {
         PRINT_DEBUG(HIGH_VERBOSITY,
                     "[ADSR] Found exprAssign - exprUnary ASSIGN exprAssign");
+
+        addRVal(&owner->fn.instr, r->lval, &r->type);
+        insertConvIfNeeded(lastInstr(owner->fn.instr), &r->type, &rDst.type);
+        switch (rDst.type.tb) {
+        case TB_INT:
+          addInstr(&owner->fn.instr, OP_STORE_I);
+          break;
+        case TB_DOUBLE:
+          addInstr(&owner->fn.instr, OP_STORE_F);
+          break;
+        }
+
         if (!rDst.lval) {
           tkerr("the assign destination must be a left-value");
         }
@@ -819,11 +974,21 @@ bool stm() {
           tkerr("the if condition must be a scalar value");
         }
         if (consume(RPAR)) {
+          addRVal(&owner->fn.instr, rCond.lval, &rCond.type);
+          Type intType = {TB_INT, NULL, -1};
+          insertConvIfNeeded(lastInstr(owner->fn.instr), &rCond.type, &intType);
+          Instr *ifJF = addInstr(&owner->fn.instr, OP_JF);
           if (stm()) {
             if (consume(ELSE)) {
-              if (!stm()) {
+              Instr *ifJMP = addInstr(&owner->fn.instr, OP_JMP);
+              ifJF->arg.instr = addInstr(&owner->fn.instr, OP_NOP);
+              if (stm()) {
+                ifJMP->arg.instr = addInstr(&owner->fn.instr, OP_NOP);
+              } else {
                 tkerr("Missing statement inside else");
               }
+            } else {
+              ifJF->arg.instr = addInstr(&owner->fn.instr, OP_NOP);
             }
             PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - if statement");
             return true;
@@ -843,13 +1008,22 @@ bool stm() {
 
   // WHILE structure
   if (consume(WHILE)) {
+    Instr *beforeWhileCond = lastInstr(owner->fn.instr);
     if (consume(LPAR)) {
       if (expr(&rCond)) {
         if (!canBeScalar(&rCond)) {
           tkerr("the while condition must be a scalar value");
         }
         if (consume(RPAR)) {
+          addRVal(&owner->fn.instr, rCond.lval, &rCond.type);
+          Type intType = {TB_INT, NULL, -1};
+          insertConvIfNeeded(lastInstr(owner->fn.instr), &rCond.type, &intType);
+          Instr *whileJF = addInstr(&owner->fn.instr, OP_JF);
+
           if (stm()) {
+            addInstr(&owner->fn.instr, OP_JMP)->arg.instr =
+                beforeWhileCond->next;
+            whileJF->arg.instr = addInstr(&owner->fn.instr, OP_NOP);
             PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - while statement");
             return true;
           } else {
@@ -870,6 +1044,10 @@ bool stm() {
   // RETURN structure RETURN expr? SEMICOLON
   if (consume(RETURN)) {
     if (expr(&rExpr)) {
+      addRVal(&owner->fn.instr, rExpr.lval, &rExpr.type);
+      insertConvIfNeeded(lastInstr(owner->fn.instr), &rExpr.type, &owner->type);
+      addInstrWithInt(&owner->fn.instr, OP_RET, symbolsLen(owner->fn.params));
+
       if (owner->type.tb == TB_VOID)
         tkerr("a void function cannot return a value");
       if (!canBeScalar(&rExpr))
@@ -878,6 +1056,7 @@ bool stm() {
         tkerr("cannot convert the return expression type to the function "
               "return type");
     } else {
+      addInstr(&owner->fn.instr, OP_RET_VOID);
       if (owner->type.tb != TB_VOID) {
         tkerr("a non-void function must return a value");
       }
@@ -892,6 +1071,9 @@ bool stm() {
 
   // Simple statement
   if (expr(&rExpr)) {
+    if (rExpr.type.tb != TB_VOID) {
+      addInstr(&owner->fn.instr, OP_DROP);
+    }
     if (consume(SEMICOLON)) {
       PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found stm - simple statement");
       return true;
@@ -978,9 +1160,14 @@ bool fnDef() {
           }
         }
         if (consume(RPAR)) {
+          addInstr(&fn->fn.instr, OP_ENTER);
           if (stmCompound(false)) {
             PRINT_DEBUG(HIGH_VERBOSITY, "[ADSR] Found fnDef");
-            // showDomain(symTable, tkName->text);
+            fn->fn.instr->arg.i = symbolsLen(fn->fn.locals);
+            if (fn->type.tb == TB_VOID) {
+              addInstrWithInt(&fn->fn.instr, OP_RET_VOID,
+                              symbolsLen(fn->fn.params));
+            }
             dropDomain();
             owner = NULL;
             return true;

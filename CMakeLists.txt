@@ -12,6 +12,7 @@ add_subdirectory(ADSR)
 add_subdirectory(AD)
 add_subdirectory(AT)
 add_subdirectory(VM)
+add_subdirectory(GC)
 
 add_executable(${TARGET_NAME} main.c)
 
@@ -20,3 +21,4 @@ target_link_libraries(${TARGET_NAME} ADSR)
 target_link_libraries(${TARGET_NAME} AD)
 target_link_libraries(${TARGET_NAME} AT)
 target_link_libraries(${TARGET_NAME} VM)
+target_link_libraries(${TARGET_NAME} GC)
