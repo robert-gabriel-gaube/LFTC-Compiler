@@ -6,4 +6,5 @@ target_include_directories(ADSR PUBLIC  ./include
                                         ../AD/include 
                                         ../VM/include
                                         ../AT/include
+                                        ../GC/include
                                         )

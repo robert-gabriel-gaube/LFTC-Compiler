@@ -8,6 +8,7 @@ struct S v[10];
 
 void f(char text[], int i, char ch) { 
 	text[i] = ch; 
+  i = (double)ch;
 }
 
 int h(int x, int y) {
